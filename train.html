@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Train garum kta ho</title>
+  </head>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.10/p5.min.js"></script>
+  <script src="https://unpkg.com/ml5@1/dist/ml5.min.js"></script>
+
+  <script>
+    let classifier;
+    let handPose;
+    let video;
+    let hands = [];
+    let isTrained = false;
+    let classification = "";
+
+    let letters = [
+      { label: "ka", nep: "क", count: 0 },
+      { label: "kha", nep: "ख", count: 0 },
+      { label: "ga", nep: "ग", count: 0 },
+      { label: "gha", nep: "घ", count: 0 },
+      { label: "nga", nep: "ङ", count: 0 },
+
+      { label: "cha", nep: "च", count: 0 },
+      { label: "chha", nep: "छ", count: 0 },
+      { label: "ja", nep: "ज", count: 0 },
+      { label: "jha", nep: "झ", count: 0 },
+      { label: "nya", nep: "ञ", count: 0 },
+
+      { label: "tta", nep: "ट", count: 0 },
+      { label: "ttha", nep: "ठ", count: 0 },
+      { label: "dda", nep: "ड", count: 0 },
+      { label: "ddha", nep: "ढ", count: 0 },
+      { label: "nna", nep: "ण", count: 0 },
+
+      { label: "ta", nep: "त", count: 0 },
+      { label: "tha", nep: "थ", count: 0 },
+      { label: "da", nep: "द", count: 0 },
+      { label: "dha", nep: "ध", count: 0 },
+      { label: "na", nep: "न", count: 0 },
+
+      { label: "pa", nep: "प", count: 0 },
+      { label: "pha", nep: "फ", count: 0 },
+      { label: "ba", nep: "ब", count: 0 },
+      { label: "bha", nep: "भ", count: 0 },
+      { label: "ma", nep: "म", count: 0 },
+
+      { label: "ya", nep: "य", count: 0 },
+      { label: "ra", nep: "र", count: 0 },
+      { label: "la", nep: "ल", count: 0 },
+      { label: "wa", nep: "व", count: 0 },
+
+      { label: "sha", nep: "श", count: 0 },
+      { label: "ssa", nep: "ष", count: 0 },
+      { label: "sa", nep: "स", count: 0 },
+      { label: "ha", nep: "ह", count: 0 },
+
+      { label: "ksha", nep: "क्ष", count: 0 },
+      { label: "tra", nep: "त्र", count: 0 },
+      { label: "gya", nep: "ज्ञ", count: 0 },
+    ];
+
+    // UI
+    let instructionP;
+    let dataCountsP;
+    let letterButtons = [];
+    let trainButton;
+
+    function preload() {
+      handPose = ml5.handPose();
+    }
+
+    function setup() {
+      // Create container for video and data side-by-side
+      let container = createDiv()
+        .id("container")
+        .style("display", "flex")
+        .style("gap", "20px");
+
+      // Video div
+      let videoContainer = createDiv().id("videoContainer").parent(container);
+
+      let canvas = createCanvas(640, 480);
+      canvas.parent(videoContainer);
+
+      video = createCapture(VIDEO);
+      video.size(640, 480);
+      video.hide();
+
+      // Data div
+      let dataContainer = createDiv()
+        .id("dataContainer")
+        .parent(container)
+        .style("width", "200px");
+
+      instructionP = createP(
+        "Gesture hold garney ani button click garney, count badxa, and then sab ko images liyesi train garney",
+      );
+      instructionP.parent(dataContainer);
+
+      dataCountsP = createP("");
+      dataCountsP.parent(dataContainer);
+
+      // Buttons container below
+      let buttonsContainer = createDiv()
+        .id("buttonsContainer")
+        .style("margin-top", "20px")
+        .style("display", "flex")
+        .style("flex-wrap", "wrap")
+        .style("gap", "10px");
+
+      letters.forEach((letter, idx) => {
+        let btn = createButton(`Add ${letter.label} ko Data`);
+        btn.mousePressed(() => addLetterData(idx));
+        btn.parent(buttonsContainer);
+        letterButtons.push(btn);
+      });
+
+      trainButton = createButton("Train & Save Model");
+      trainButton.mousePressed(train);
+      trainButton.parent(buttonsContainer);
+
+      ml5.setBackend("webgl");
+
+      let classifierOptions = {
+        task: "classification",
+        debug: true,
+      };
+
+      classifier = ml5.neuralNetwork(classifierOptions);
+      handPose.detectStart(video, gotHands);
+
+      updateDataCountUI();
+    }
+
+    function draw() {
+      image(video, 0, 0, width, height);
+      if (hands[0]) {
+        let hand = hands[0];
+        for (let i = 0; i < hand.keypoints.length; i++) {
+          let keypoint = hand.keypoints[i];
+          fill(0, 255, 0);
+          noStroke();
+          circle(keypoint.x, keypoint.y, 10);
+        }
+      }
+
+      if (isTrained && hands[0]) {
+        let inputData = flattenHandData();
+        classifier.classify(inputData, gotClassification);
+        textSize(64);
+        fill(0, 255, 0);
+        text(classification, 20, 60);
+      }
+    }
+
+    function gotHands(results) {
+      hands = results;
+    }
+
+    function gotClassification(results) {
+      let label = results[0].label;
+      let found = letters.find((l) => l.label === label);
+      classification = found ? found.nep : label;
+    }
+
+    function flattenHandData() {
+      let hand = hands[0];
+      let handData = [];
+
+      for (let i = 0; i < hand.keypoints.length; i++) {
+        let keypoint = hand.keypoints[i];
+        handData.push(keypoint.x);
+        handData.push(keypoint.y);
+      }
+
+      return handData;
+    }
+
+    function addLetterData(index) {
+      if (hands[0]) {
+        let inputData = flattenHandData();
+        let outputData = [letters[index].label];
+        classifier.addData(inputData, outputData);
+        letters[index].count++;
+      }
+      updateDataCountUI();
+    }
+
+    function updateDataCountUI() {
+      let html = "";
+      letters.forEach((l) => {
+        html += `<span style="margin:3px; padding:2px 5px; border:1px solid #ccc; border-radius:4px; display:inline-block;">${l.nep} (${l.label}): ${l.count}</span>`;
+      });
+      dataCountsP.html(html);
+
+      // style container for wrapping
+      select("#dataContainer")
+        .style("display", "flex")
+        .style("flex-wrap", "wrap")
+        .style("max-height", "480px") // same as video height
+        .style("overflow-y", "auto");
+    }
+
+    function train() {
+      classifier.normalizeData();
+
+      let trainingOptions = {
+        epochs: 50,
+      };
+
+      classifier.train(trainingOptions, finishedTraining);
+    }
+
+    function finishedTraining() {
+      console.log("Training finished!");
+      classifier.save();
+      isTrained = true;
+    }
+  </script>
+  <body></body>
+</html>
