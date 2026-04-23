@@ -16,8 +16,23 @@
     let hands = [];
     let isTrained = false;
     let classification = "";
+    let rawData = []; // stores all { input, output } pairs across sessions
 
     let letters = [
+      { label: "none", nep: "", count: 0 },
+      { label: "a", nep: "अ", count: 0 },
+      { label: "aa", nep: "आ", count: 0 },
+      { label: "i", nep: "इ", count: 0 },
+      { label: "ii", nep: "ई", count: 0 },
+      { label: "u", nep: "उ", count: 0 },
+      { label: "uu", nep: "ऊ", count: 0 },
+      { label: "ri", nep: "ऋ", count: 0 },
+      { label: "e", nep: "ए", count: 0 },
+      { label: "ai", nep: "ऐ", count: 0 },
+      { label: "o", nep: "ओ", count: 0 },
+      { label: "au", nep: "औ", count: 0 },
+      { label: "am", nep: "अं", count: 0 },
+      { label: "aha", nep: "अः", count: 0 },
       { label: "ka", nep: "क", count: 0 },
       { label: "kha", nep: "ख", count: 0 },
       { label: "ga", nep: "ग", count: 0 },
@@ -63,26 +78,24 @@
       { label: "gya", nep: "ज्ञ", count: 0 },
     ];
 
-    // UI
     let instructionP;
     let dataCountsP;
     let letterButtons = [];
     let trainButton;
+    let lastClassifyTime = 0;
+    let lastValid = "";
 
     function preload() {
       handPose = ml5.handPose();
     }
 
     function setup() {
-      // Create container for video and data side-by-side
       let container = createDiv()
         .id("container")
         .style("display", "flex")
         .style("gap", "20px");
 
-      // Video div
       let videoContainer = createDiv().id("videoContainer").parent(container);
-
       let canvas = createCanvas(640, 480);
       canvas.parent(videoContainer);
 
@@ -90,21 +103,20 @@
       video.size(640, 480);
       video.hide();
 
-      // Data div
       let dataContainer = createDiv()
         .id("dataContainer")
         .parent(container)
-        .style("width", "200px");
+        .style("width", "220px");
 
       instructionP = createP(
-        "Gesture hold garney ani button click garney, count badxa, and then sab ko images liyesi train garney",
+        "Gesture hold garney ani button click garney. Data save/load garna tala buttons use gara.",
       );
       instructionP.parent(dataContainer);
 
       dataCountsP = createP("");
       dataCountsP.parent(dataContainer);
 
-      // Buttons container below
+      // Gesture buttons
       let buttonsContainer = createDiv()
         .id("buttonsContainer")
         .style("margin-top", "20px")
@@ -119,21 +131,133 @@
         letterButtons.push(btn);
       });
 
-      trainButton = createButton("Train & Save Model");
+      // Action buttons
+      let actionContainer = createDiv()
+        .style("margin-top", "16px")
+        .style("display", "flex")
+        .style("flex-wrap", "wrap")
+        .style("gap", "8px");
+
+      // Save raw data to JSON
+      let saveDataBtn = createButton(" Save Data JSON");
+      saveDataBtn.mousePressed(saveDataJSON);
+      saveDataBtn.parent(actionContainer);
+
+      // Load raw data from JSON (hidden file input)
+      let loadDataInput = createElement("input");
+      loadDataInput.attribute("type", "file");
+      loadDataInput.attribute("accept", ".json");
+      loadDataInput.style("display", "none");
+      loadDataInput.changed(() => loadDataJSON(loadDataInput));
+      loadDataInput.parent(actionContainer);
+
+      let loadDataBtn = createButton(" Load Data JSON");
+      loadDataBtn.mousePressed(() => loadDataInput.elt.click());
+      loadDataBtn.parent(actionContainer);
+
+      // Train & save model
+      trainButton = createButton(" Train & Save Model");
       trainButton.mousePressed(train);
-      trainButton.parent(buttonsContainer);
+      trainButton.parent(actionContainer);
+
+      // Load a previously saved model (hidden file input, accepts multiple)
+      let loadModelInput = createElement("input");
+      loadModelInput.attribute("type", "file");
+      loadModelInput.attribute("accept", ".json,.bin");
+      loadModelInput.attribute("multiple", "");
+      loadModelInput.style("display", "none");
+      loadModelInput.changed(() => loadTrainedModel(loadModelInput));
+      loadModelInput.parent(actionContainer);
+
+      let loadModelBtn = createButton(" Load Trained Model");
+      loadModelBtn.mousePressed(() => loadModelInput.elt.click());
+      loadModelBtn.parent(actionContainer);
 
       ml5.setBackend("webgl");
 
-      let classifierOptions = {
-        task: "classification",
-        debug: true,
-      };
-
-      classifier = ml5.neuralNetwork(classifierOptions);
+      classifier = ml5.neuralNetwork({ task: "classification", debug: true });
       handPose.detectStart(video, gotHands);
 
       updateDataCountUI();
+    }
+
+    // Save rawData array as JSON file
+    function saveDataJSON() {
+      let payload = {
+        letters: letters.map((l) => ({
+          label: l.label,
+          nep: l.nep,
+          count: l.count,
+        })),
+        data: rawData,
+      };
+      let blob = new Blob([JSON.stringify(payload)], {
+        type: "application/json",
+      });
+      let url = URL.createObjectURL(blob);
+      let a = document.createElement("a");
+      a.href = url;
+      a.download = "gesture_data.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    //Load rawData from JSON and re-add to classifier
+    function loadDataJSON(fileInput) {
+      let file = fileInput.elt.files[0];
+      if (!file) return;
+      let reader = new FileReader();
+      reader.onload = (e) => {
+        let payload = JSON.parse(e.target.result);
+
+        // Restore counts
+        if (payload.letters) {
+          payload.letters.forEach((saved) => {
+            let found = letters.find((l) => l.label === saved.label);
+            if (found) found.count = saved.count;
+          });
+        }
+
+        // Restore data into classifier and rawData
+        if (payload.data) {
+          payload.data.forEach((item) => {
+            classifier.addData(item.input, item.output);
+            rawData.push(item);
+          });
+        }
+
+        updateDataCountUI();
+        console.log(
+          `Loaded ${payload.data ? payload.data.length : 0} data points.`,
+        );
+      };
+      reader.readAsText(file);
+    }
+
+    //Load a previously trained model
+    function loadTrainedModel(fileInput) {
+      // ml5 expects the model.json file; it finds weights automatically
+      // We grab the JSON file from the selection
+      let files = fileInput.elt.files;
+      let jsonFile = Array.from(files).find(
+        (f) => f.name.endsWith(".json") && !f.name.includes("meta"),
+      );
+      if (!jsonFile) {
+        alert(
+          "Please select the model.json file (and include weights.bin and metadata.json).",
+        );
+        return;
+      }
+
+      // Build an object-URL for the JSON and pass it to ml5
+      let jsonURL = URL.createObjectURL(jsonFile);
+
+      // ml5 neuralNetwork.load takes a model.json URL
+      classifier.load(jsonURL, () => {
+        console.log("Model loaded!");
+        isTrained = true;
+        URL.revokeObjectURL(jsonURL);
+      });
     }
 
     function draw() {
@@ -149,8 +273,12 @@
       }
 
       if (isTrained && hands[0]) {
-        let inputData = flattenHandData();
-        classifier.classify(inputData, gotClassification);
+        let now = millis();
+        if (now - lastClassifyTime > 200) {
+          let inputData = flattenHandData();
+          classifier.classify(inputData, gotClassification);
+          lastClassifyTime = now;
+        }
         textSize(64);
         fill(0, 255, 0);
         text(classification, 20, 60);
@@ -162,21 +290,57 @@
     }
 
     function gotClassification(results) {
-      let label = results[0].label;
-      let found = letters.find((l) => l.label === label);
-      classification = found ? found.nep : label;
+      if (!results || results.length === 0) return;
+
+      let top = results[0];
+      let label = top.label;
+      let confidence = top.confidence;
+
+      // Suppress "none" class
+      if (label === "none") {
+        classification = "";
+        lastValid = "";
+        return;
+      }
+
+      // Also suppress if "none" has notable confidence
+      let noneResult = results.find((r) => r.label === "none");
+      if (noneResult && noneResult.confidence > 0.35) {
+        classification = "";
+        lastValid = "";
+        return;
+      }
+
+      // Raised threshold to 0.90
+      if (confidence > 0.9) {
+        let found = letters.find((l) => l.label === label);
+        lastValid = found ? found.nep : label;
+        classification = `${lastValid} (${confidence.toFixed(2)})`;
+      } else {
+        classification = lastValid ? `${lastValid} (...)` : "";
+      }
     }
 
     function flattenHandData() {
       let hand = hands[0];
       let handData = [];
+      let baseX = hand.keypoints[0].x;
+      let baseY = hand.keypoints[0].y;
+
+      let maxDist = 0;
+      for (let i = 0; i < hand.keypoints.length; i++) {
+        let dx = hand.keypoints[i].x - baseX;
+        let dy = hand.keypoints[i].y - baseY;
+        let dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > maxDist) maxDist = dist;
+      }
+      if (maxDist === 0) return [];
 
       for (let i = 0; i < hand.keypoints.length; i++) {
-        let keypoint = hand.keypoints[i];
-        handData.push(keypoint.x);
-        handData.push(keypoint.y);
+        let kp = hand.keypoints[i];
+        handData.push((kp.x - baseX) / maxDist);
+        handData.push((kp.y - baseY) / maxDist);
       }
-
       return handData;
     }
 
@@ -185,6 +349,7 @@
         let inputData = flattenHandData();
         let outputData = [letters[index].label];
         classifier.addData(inputData, outputData);
+        rawData.push({ input: inputData, output: outputData }); // ← also store locally
         letters[index].count++;
       }
       updateDataCountUI();
@@ -197,27 +362,21 @@
       });
       dataCountsP.html(html);
 
-      // style container for wrapping
       select("#dataContainer")
         .style("display", "flex")
         .style("flex-wrap", "wrap")
-        .style("max-height", "480px") // same as video height
+        .style("max-height", "480px")
         .style("overflow-y", "auto");
     }
 
     function train() {
       classifier.normalizeData();
-
-      let trainingOptions = {
-        epochs: 50,
-      };
-
-      classifier.train(trainingOptions, finishedTraining);
+      classifier.train({ epochs: 50 }, finishedTraining);
     }
 
     function finishedTraining() {
       console.log("Training finished!");
-      classifier.save();
+      classifier.save(); // saves model.json + weights.bin + metadata.json
       isTrained = true;
     }
   </script>
