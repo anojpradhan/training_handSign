@@ -169,10 +169,6 @@
       loadModelInput.changed(() => loadTrainedModel(loadModelInput));
       loadModelInput.parent(actionContainer);
 
-      let loadModelBtn = createButton(" Load Trained Model");
-      loadModelBtn.mousePressed(() => loadModelInput.elt.click());
-      loadModelBtn.parent(actionContainer);
-
       ml5.setBackend("webgl");
 
       classifier = ml5.neuralNetwork({ task: "classification", debug: true });
